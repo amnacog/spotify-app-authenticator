@@ -1,0 +1,13 @@
+{
+  "client_id": "your_spotify_client_id",
+  "client_secret": "your_spotify_client_secret",
+  "redirect_uri": "http://localhost:8888/callback",
+  "scopes": [
+    "user-read-private",
+    "user-read-email",
+    "playlist-read-private",
+    "playlist-modify-private",
+    "playlist-modify-public"
+  ],
+  "port": 8888
+}
