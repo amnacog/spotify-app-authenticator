@@ -18,6 +18,10 @@ struct Args {
     /// Optional output file to save the tokens as JSON
     #[clap(short, long, value_parser)]
     output_file: Option<PathBuf>,
+
+    /// Use PKCE (Proof Key for Code Exchange) for enhanced security
+    #[clap(long)]
+    pkce: bool,
 }
 
 fn main() -> Result<()> {
@@ -32,7 +36,7 @@ fn main() -> Result<()> {
     println!("Requested scopes: {}", config.scopes_string());
 
     // Create the authenticator
-    let authenticator = SpotifyAuthenticator::new(config);
+    let authenticator = SpotifyAuthenticator::new(config, args.pkce);
 
     // Run the authentication flow
     let tokens = authenticator

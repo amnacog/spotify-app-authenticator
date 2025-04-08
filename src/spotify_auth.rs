@@ -34,14 +34,16 @@ pub struct SpotifyTokens {
 pub struct SpotifyAuthenticator {
     config: Config,
     http_client: Client,
+    use_pkce: bool,
 }
 
 impl SpotifyAuthenticator {
     /// Create a new SpotifyAuthenticator with the given config
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, use_pkce: bool) -> Self {
         Self {
             config,
             http_client: Client::new(),
+            use_pkce,
         }
     }
 
@@ -75,16 +77,21 @@ impl SpotifyAuthenticator {
 
     /// Start the Spotify authorization flow
     pub fn authenticate(&self) -> Result<SpotifyTokens> {
-        // Generate PKCE code verifier and challenge
-        let code_verifier = Self::generate_code_verifier();
-        println!(
-            "Generated code verifier: {} (length: {})",
-            code_verifier,
-            code_verifier.len()
-        );
+        let (code_verifier, code_challenge) = if self.use_pkce {
+            // Generate PKCE code verifier and challenge
+            let code_verifier = Self::generate_code_verifier();
+            println!(
+                "Generated code verifier: {} (length: {})",
+                code_verifier,
+                code_verifier.len()
+            );
 
-        let code_challenge = Self::generate_code_challenge(&code_verifier);
-        println!("Generated code challenge: {}", code_challenge);
+            let code_challenge = Self::generate_code_challenge(&code_verifier);
+            println!("Generated code challenge: {}", code_challenge);
+            (Some(code_verifier), Some(code_challenge))
+        } else {
+            (None, None)
+        };
 
         // Create a shared state to hold the authorization code we'll receive
         let auth_code = Arc::new(Mutex::new(None::<String>));
@@ -93,7 +100,7 @@ impl SpotifyAuthenticator {
         let server = self.start_callback_server()?;
 
         // Build the authorization URL
-        let auth_url = self.build_authorization_url(&code_challenge)?;
+        let auth_url = self.build_authorization_url(code_challenge.as_deref())?;
 
         // Open the user's browser to the authorization URL
         println!("Opening browser for Spotify authentication...");
@@ -106,21 +113,29 @@ impl SpotifyAuthenticator {
         let authorization_code = self.wait_for_callback(server, auth_code)?;
 
         // Exchange the authorization code for tokens
-        self.exchange_code_for_tokens(&authorization_code, &code_verifier)
+        self.exchange_code_for_tokens(&authorization_code, code_verifier.as_deref())
     }
 
     /// Build the Spotify authorization URL
-    fn build_authorization_url(&self, code_challenge: &str) -> Result<String> {
+    fn build_authorization_url(&self, code_challenge: Option<&str>) -> Result<String> {
         let mut url = Url::parse("https://accounts.spotify.com/authorize")?;
 
-        url.query_pairs_mut()
+        let mut query_pairs = url.query_pairs_mut();
+        query_pairs
             .append_pair("client_id", &self.config.client_id)
             .append_pair("response_type", "code")
             .append_pair("redirect_uri", &self.config.redirect_uri)
-            .append_pair("code_challenge_method", "S256")
-            .append_pair("code_challenge", code_challenge)
             .append_pair("scope", &self.config.scopes_string());
 
+        if self.use_pkce {
+            if let Some(challenge) = code_challenge {
+                query_pairs
+                    .append_pair("code_challenge_method", "S256")
+                    .append_pair("code_challenge", challenge);
+            }
+        }
+
+        drop(query_pairs); // Release the mutable borrow
         Ok(url.to_string())
     }
 
@@ -264,14 +279,9 @@ impl SpotifyAuthenticator {
     fn exchange_code_for_tokens(
         &self,
         authorization_code: &str,
-        code_verifier: &str,
+        code_verifier: Option<&str>,
     ) -> Result<SpotifyTokens> {
         println!("Exchanging authorization code for tokens...");
-        println!(
-            "Using code verifier: {} (length: {})",
-            code_verifier,
-            code_verifier.len()
-        );
 
         // Prepare the token request parameters
         let mut params = HashMap::new();
@@ -280,7 +290,12 @@ impl SpotifyAuthenticator {
         params.insert("grant_type", "authorization_code".to_string());
         params.insert("code", authorization_code.to_string());
         params.insert("redirect_uri", self.config.redirect_uri.clone());
-        params.insert("code_verifier", code_verifier.to_string());
+
+        if self.use_pkce {
+            if let Some(verifier) = code_verifier {
+                params.insert("code_verifier", verifier.to_string());
+            }
+        }
 
         // Make the POST request to the token endpoint
         let response = self
